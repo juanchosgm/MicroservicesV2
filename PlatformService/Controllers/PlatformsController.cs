@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using AutoMapper;
 using Microsoft.AspNetCore.Mvc;
+using PlatformService.AsyncDataServices;
 using PlatformService.Data;
 using PlatformService.Dtos;
 using PlatformService.Models;
@@ -17,13 +18,16 @@ namespace PlatformService.Controllers
         private readonly IPlatformRepo platformRepo;
         private readonly IMapper mapper;
         private readonly ICommandDataClient commandDataClient;
+        private readonly IMessageBusClient messageBusClient;
 
         public PlatformsController(IPlatformRepo platformRepo,
             IMapper mapper,
-            ICommandDataClient commandDataClient)
+            ICommandDataClient commandDataClient,
+            IMessageBusClient messageBusClient)
         {
             this.mapper = mapper;
             this.commandDataClient = commandDataClient;
+            this.messageBusClient = messageBusClient;
             this.platformRepo = platformRepo;
         }
 
@@ -53,6 +57,7 @@ namespace PlatformService.Controllers
             platformRepo.CreatePlatform(platformModel);
             platformRepo.SaveChanges();
             var platformRead = mapper.Map<PlatformReadDto>(platformModel);
+            // Send Sync Message
             try
             {
                 await commandDataClient.SendPlatformToCommand(platformRead);
@@ -60,7 +65,17 @@ namespace PlatformService.Controllers
             catch (Exception ex)
             {
                 Console.WriteLine($"--> Could not send synchronously: {ex.Message}");
-                throw;
+            }
+            // Send Async Message
+            try
+            {
+                 var platformPublishedDto = mapper.Map<PlatformPublishedDto>(platformRead);
+                 platformPublishedDto.Event = "Platform_Published";
+                 messageBusClient.PublishNewPlatform(platformPublishedDto);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"--> Could not send asynchronously: {ex.Message}");
             }
             return CreatedAtRoute(nameof(GetPlatformById), new { id = platformRead.Id }, platformRead);
         }
